@@ -13,13 +13,13 @@ app.post('/webhook', async (req, res) => {
   let reply = 'Hi! I am Jarvis';
   try {
     const result = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.0-flash-lite',
       contents: `You are Jarvis WhatsApp assistant. Reply short and friendly. User: ${msg}`
     });
     reply = result.text;
   } catch (err) {
     console.log('Error:', err.message);
-    reply = 'Error: ' + err.message;
+    reply = 'Boss quota full, wait 1 min and try again. Error: ' + err.message;
   }
   const twiml = new twilio.twiml.MessagingResponse();
   twiml.message(reply);
