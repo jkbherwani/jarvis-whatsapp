@@ -1,54 +1,30 @@
 const express = require('express');
-const bodyParser = require('body-parser');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const twilio = require('twilio');
-require('dotenv').config();
 
 const app = express();
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+app.use(express.urlencoded({ extended: false }));
 
-const PORT = process.env.PORT || 3000;
-
-// Initialize Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-// Memory for chat
-let chatHistory = {};
-
-app.get('/', (req, res) => {
-  res.send('Jarvis is LIVE Boss! 🤖');
-});
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.post('/webhook', async (req, res) => {
-  const from = req.body.From;
-  const incomingMsg = req.body.Body;
-  console.log(`Message from ${from}: ${incomingMsg}`);
-
-  if (!chatHistory[from]) chatHistory[from] = [];
-
-  chatHistory[from].push({ role: "user", parts: [{ text: incomingMsg }] });
-
+  const msg = req.body.Body || 'Hi';
+  console.log('Incoming:', msg);
+  let reply = 'Hi! I am Jarvis';
   try {
-    const prompt = `You are Jarvis, a helpful personal assistant for Aatrey. User said: "${incomingMsg}". Reply in friendly, short, helpful way like Jarvis from Iron Man. If user asks to set reminder, say you will remind. Keep reply under 100 words.`;
-
-    const result = await model.generateContent(prompt);
-    const reply = result.response.text();
-
-    const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
-    await client.messages.create({
-      from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: from,
-      body: reply
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: `You are Jarvis WhatsApp assistant. Reply short and friendly. User: ${msg}`
     });
-
-    chatHistory[from].push({ role: "model", parts: [{ text: reply }] });
-    res.status(200).send('OK');
+    reply = result.text;
   } catch (err) {
-    console.error(err);
-    res.status(200).send('Error handled');
+    console.log('Error:', err.message);
+    reply = 'Error: ' + err.message;
   }
+  const twiml = new twilio.twiml.MessagingResponse();
+  twiml.message(reply);
+  res.type('text/xml').send(twiml.toString());
 });
 
-app.listen(PORT, () => console.log(`Jarvis running on port ${PORT}`));
+app.get('/', (req, res) => res.send('Jarvis Running!'));
+app.listen(process.env.PORT || 10000, () => console.log('Jarvis Live'));
