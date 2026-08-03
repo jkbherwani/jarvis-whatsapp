@@ -1,118 +1,92 @@
 const express = require('express');
 const bodyParser = require('body-parser');
+const twilio = require('twilio');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 const fs = require('fs');
-const path = require('path');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const twilio = require('twilio');
 const cron = require('node-cron');
-
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
-app.use(express.json());
-app.use('/audio', express.static(path.join(__dirname, 'public')));
+app.use(bodyParser.json());
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER.startsWith('whatsapp:') ? process.env.TWILIO_PHONE_NUMBER : `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`;
+const GEMINI_KEY = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(GEMINI_KEY);
 
-// AAPKA EXISTING VARIABLE
-const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER.startsWith('whatsapp')? process.env.TWILIO_PHONE_NUMBER : `whatsapp:${process.env.TWILIO_PHONE_NUMBER}`;
+const REM_FILE = './reminders.json';
+function loadReminders() { try { if (fs.existsSync(REM_FILE)) return JSON.parse(fs.readFileSync(REM_FILE)); } catch(e){} return []; }
+function saveReminders(data) { fs.writeFileSync(REM_FILE, JSON.stringify(data, null, 2)); }
+if (!fs.existsSync(REM_FILE)) saveReminders([]);
 
-const REMINDER_FILE = path.join(__dirname, 'reminders.json');
-if(!fs.existsSync(REMINDER_FILE)) fs.writeFileSync(REMINDER_FILE, JSON.stringify([]));
-
-async function parseReminder(userText){
-  try{
-    const model = genAI.getGenerativeModel({model:"gemini-flash-latest"});
-    const now = new Date().toLocaleString("en-IN", {timeZone: "Asia/Kolkata"});
-    const prompt = `Current Ahmedabad time: ${now} Asia/Kolkata. User: "${userText}". If this is reminder (birthday, anniversary, meeting, call, yaad dilana etc) return ONLY JSON: {"isReminder": true, "task": "Pinky Birthday", "datetime": "2026-12-05T10:00:00+05:30", "repeat": "yearly"} Rules: datetime ISO with +05:30, if year missing use next upcoming date. repeat: once,daily,yearly (birthday/anniversary = yearly). If not reminder return {"isReminder": false}. ONLY JSON.`;
-    const result = await model.generateContent(prompt);
-    let txt = result.response.text().replace(/```json|```/g,'').trim();
-    return JSON.parse(txt);
-  }catch(e){ console.log("Parse error", e.message); return {isReminder:false}; }
-}
-
-function saveReminder(data){
-  let all = JSON.parse(fs.readFileSync(REMINDER_FILE));
-  all.push({...data, id: Date.now(), sent: false});
-  fs.writeFileSync(REMINDER_FILE, JSON.stringify(all, null, 2));
-}
-
-app.get('/', (req,res)=> res.send('Jarvis Real Reminder Online Boss!') );
-
-app.post('/webhook', async (req,res)=>{
-  const from = req.body.From;
-  const to = req.body.To;
-  let finalText = req.body.Body || "";
-  let isVoice = false;
-  const mediaUrl = req.body.MediaUrl0;
-  const mediaType = req.body.MediaContentType0;
-
-  if(mediaUrl && mediaType && mediaType.includes('audio')){
-    try{
-      const audioRes = await axios.get(mediaUrl, { responseType:'arraybuffer', auth:{ username: process.env.TWILIO_ACCOUNT_SID, password: process.env.TWILIO_AUTH_TOKEN } });
-      const model = genAI.getGenerativeModel({model:"gemini-flash-latest"});
-      const r = await model.generateContent([{ inlineData:{ data: Buffer.from(audioRes.data).toString('base64'), mimeType: mediaType }}, {text:"Transcribe Hindi/English exactly"}]);
-      finalText = r.response.text();
-      isVoice = true;
-    }catch(e){ console.log("Voice error", e.message); }
-  }
-
-  if(!finalText) finalText = "Hi";
-
-  const parsed = await parseReminder(finalText);
-  let jarvisReply = "";
-
-  if(parsed.isReminder){
-    saveReminder({ task: parsed.task, datetime: parsed.datetime, repeat: parsed.repeat, user: from });
-    const dt = new Date(parsed.datetime).toLocaleString("en-IN", {timeZone:"Asia/Kolkata", day:'numeric', month:'long', year:'numeric', hour:'numeric', minute:'numeric', hour12:true});
-    jarvisReply = `Done Boss! ✅\n\nReminder set: *${parsed.task}*\nOn: ${dt}\nRepeat: ${parsed.repeat}\n\nMain pakka yaad dilaunga!`;
-  } else {
-    try{
-      const model = genAI.getGenerativeModel({model:"gemini-flash-latest"});
-      const r = await model.generateContent(`You are Jarvis, friendly assistant for Boss in Ahmedabad. Reply short Hindi+English mix, call him Boss. User: ${finalText}`);
-      jarvisReply = r.response.text();
-    }catch(e){ jarvisReply = "Boss thoda error aaya, phir se bolo!"; console.log(e.message); }
-  }
-
-  if(isVoice && process.env.ELEVENLABS_API_KEY){
-    try{
-      if(!fs.existsSync('public')) fs.mkdirSync('public');
-      const fileName = `jarvis_${Date.now()}.mp3`;
-      const filePath = path.join(__dirname, 'public', fileName);
-      const ttsRes = await axios.post(`https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM`, {text: jarvisReply, model_id:"eleven_multilingual_v2"}, {headers:{"xi-api-key":process.env.ELEVENLABS_API_KEY}, responseType:'arraybuffer'});
-      fs.writeFileSync(filePath, ttsRes.data);
-      const audioUrl = `https://${req.get('host')}/audio/${fileName}`;
-      await client.messages.create({from: to, to: from, body: jarvisReply, mediaUrl:[audioUrl]});
-      setTimeout(()=> fs.existsSync(filePath) && fs.unlinkSync(filePath), 120000);
-      return res.send('<Response></Response>');
-    }catch(e){ console.log("TTS Error", e.message); }
-  }
-
-  const twiml = new twilio.twiml.MessagingResponse();
-  twiml.message(jarvisReply);
-  res.type('text/xml').send(twiml.toString());
-});
-
-cron.schedule('* * * * *', async ()=>{
-  try{
-    let all = JSON.parse(fs.readFileSync(REMINDER_FILE));
+// Check reminders every minute
+cron.schedule('* * * * *', async () => {
+    const reminders = loadReminders();
     const now = new Date();
-    for(let rem of all){
-      if(rem.sent) continue;
-      if(now >= new Date(rem.datetime)){
-        console.log("Sending reminder:", rem.task);
-        await client.messages.create({ from: FROM_NUMBER, to: rem.user, body: `🔔 REMINDER BOSS! 🔔\n\n*${rem.task}*\nTime: ${new Date(rem.datetime).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})}\n\nYaad dila diya Boss!` });
-        rem.sent = true;
-        if(rem.repeat === 'yearly'){
-          let next = new Date(rem.datetime); next.setFullYear(next.getFullYear()+1);
-          all.push({...rem, id: Date.now()+Math.random(), datetime: next.toISOString(), sent:false});
+    let changed = false;
+    for (let rem of reminders) {
+        if (rem.sent) continue;
+        const remTime = new Date(rem.datetime);
+        if (now >= remTime) {
+            try {
+                await client.messages.create({ from: FROM_NUMBER, to: rem.to, body: `🔔 REMINDER BOSS! 🔔\n*${rem.task}*\nTime: ${remTime.toLocaleString('en-IN', {timeZone:'Asia/Kolkata'})}\n\nYaad dila diya Boss!` });
+                console.log(`Reminder sent: ${rem.task}`);
+                if (rem.repeat === 'yearly') {
+                    rem.datetime = new Date(remTime.setFullYear(remTime.getFullYear() + 1)).toISOString();
+                    rem.sent = false;
+                } else { rem.sent = true; }
+                changed = true;
+            } catch (e) { console.error("Reminder send error", e.message); }
         }
-      }
     }
-    fs.writeFileSync(REMINDER_FILE, JSON.stringify(all, null, 2));
-  }catch(e){ console.log("Cron error", e.message); }
+    if (changed) saveReminders(reminders);
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, ()=> console.log('Jarvis ON '+PORT));
+async function extractReminderWithAI(text, from) {
+    try {
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const nowStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+        const prompt = `Current time: ${nowStr} (Asia/Kolkata). User says: "${text}". Extract reminder. If user says "2 minute baad", add 2 minutes to current time. If says date like "5 December ko 10 baje", make date. Return ONLY JSON: {"isReminder":true/false, "task":"string like 'Pinky Birthday' or 'Chai peena' - extract ANY name/task", "datetime":"ISO string like 2026-12-05T10:00:00+05:30", "repeat":"yearly if birthday/anniversary else none"}. No extra text.`;
+        const result = await model.generateContent(prompt);
+        let jsonStr = result.response.text().replace(/```json|```/g, '').trim();
+        const data = JSON.parse(jsonStr);
+        if (data.isReminder && data.task && data.datetime) {
+            const reminders = loadReminders();
+            reminders.push({ id: Date.now(), to: from, task: data.task, datetime: data.datetime, repeat: data.repeat || 'none', sent: false, createdAt: new Date().toISOString() });
+            saveReminders(reminders);
+            return data;
+        }
+        return null;
+    } catch (e) { console.error("AI Extract Error", e.message); return null; }
+}
+
+app.post('/whatsapp', async (req, res) => {
+    const incomingMsg = req.body.Body?.trim() || '';
+    const from = req.body.From;
+    console.log(`Msg from ${from}: ${incomingMsg}`);
+    if (!incomingMsg) return res.sendStatus(200);
+    try {
+        const reminderData = await extractReminderWithAI(incomingMsg, from);
+        if (reminderData) {
+            const d = new Date(reminderData.datetime);
+            const pretty = d.toLocaleString('en-IN', { day:'2-digit', month:'long', hour:'2-digit', minute:'2-digit', timeZone:'Asia/Kolkata' });
+            const msg = `Done Boss! ✅ Reminder Set!\n\n📌 Task: *${reminderData.task}*\n📅 On: ${pretty}\n🔁 Repeat: ${reminderData.repeat}\n\nTime pe yaad dila dunga!`;
+            await client.messages.create({ from: FROM_NUMBER, to: from, body: msg });
+            return res.sendStatus(200);
+        }
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const result = await model.generateContent(`You are JARVIS, helpful assistant for Boss. Reply short in Hindi/English mix. User: ${incomingMsg}`);
+        const reply = result.response.text();
+        await client.messages.create({ from: FROM_NUMBER, to: from, body: reply });
+        res.sendStatus(200);
+    } catch (error) {
+        console.error("Parse error", error.message);
+        try { await client.messages.create({ from: FROM_NUMBER, to: from, body: `Boss thoda error aaya, phir se bolo!` }); } catch(e){}
+        res.sendStatus(200);
+    }
+});
+
+app.get('/', (req,res) => res.send('Jarvis Real Reminder Online ✅'));
+app.get('/reminders', (req,res) => res.json(loadReminders()));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Jarvis ON ${PORT}`));
