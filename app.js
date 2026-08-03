@@ -26,17 +26,16 @@ app.post('/webhook', async (req,res)=>{
   let finalText = userMsg;
   let isVoice = false;
 
-  // If user sent voice note, transcribe it
   if(mediaUrl && mediaType && mediaType.includes('audio')){
     try{
       const audioRes = await axios.get(mediaUrl, {
         responseType: 'arraybuffer',
         auth: { username: process.env.TWILIO_ACCOUNT_SID, password: process.env.TWILIO_AUTH_TOKEN }
       });
-      const model = genAI.getGenerativeModel({model:"gemini-1.5-flash"});
+      const model = genAI.getGenerativeModel({model:"gemini-2.0-flash"});
       const result = await model.generateContent([
         { inlineData: { data: Buffer.from(audioRes.data).toString('base64'), mimeType: mediaType } },
-        { text: "Transcribe this audio exactly, detect Hindi/English. Reply only transcription." }
+        { text: "Transcribe this audio exactly in Hindi/English. Only transcription." }
       ]);
       finalText = result.response.text();
       isVoice = true;
@@ -46,55 +45,36 @@ app.post('/webhook', async (req,res)=>{
 
   if(!finalText) finalText = "Hi";
 
-  // Gemini reply
   let jarvisReply = "";
   try{
-    const model = genAI.getGenerativeModel({model:"gemini-1.5-flash"});
-    const prompt = `You are Jarvis, friendly assistant for user in Ahmedabad. User speaks Hindi+English mix. Reply in same language user used. Keep short, friendly, call him Boss sometimes. User says: ${finalText}`;
+    const model = genAI.getGenerativeModel({model:"gemini-2.0-flash"});
+    const prompt = `You are Jarvis, friendly assistant for Boss in Ahmedabad. Reply in same language user used (Hindi+English mix). Keep short. Call him Boss. User: ${finalText}`;
     const result = await model.generateContent(prompt);
     jarvisReply = result.response.text();
   }catch(e){
     jarvisReply = "Boss thoda error aaya, phir se bolo!";
+    console.log("Gemini text error", e.message);
   }
 
-  // If user sent VOICE, reply with VOICE + TEXT using ELEVENLABS
   if(isVoice && process.env.ELEVENLABS_API_KEY){
     try{
       if(!fs.existsSync('public')) fs.mkdirSync('public');
       const fileName = `jarvis_${Date.now()}.mp3`;
       const filePath = path.join(__dirname, 'public', fileName);
-
-      const voiceId = "21m00Tcm4TlvDq8ikWAM"; // Rachel multilingual
+      const voiceId = "21m00Tcm4TlvDq8ikWAM";
       const ttsRes = await axios.post(
         `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-        {
-          text: jarvisReply,
-          model_id: "eleven_multilingual_v2",
-          voice_settings:{ stability:0.5, similarity_boost:0.7 }
-        },
-        {
-          headers:{ "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type":"application/json" },
-          responseType:'arraybuffer'
-        }
+        { text: jarvisReply, model_id: "eleven_multilingual_v2", voice_settings:{ stability:0.5, similarity_boost:0.7 } },
+        { headers:{ "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type":"application/json" }, responseType:'arraybuffer' }
       );
       fs.writeFileSync(filePath, ttsRes.data);
       const audioPublicUrl = `https://${req.get('host')}/audio/${fileName}`;
-
-      await client.messages.create({
-        from: to,
-        to: from,
-        body: jarvisReply,
-        mediaUrl: [audioPublicUrl]
-      });
-
+      await client.messages.create({ from: to, to: from, body: jarvisReply, mediaUrl: [audioPublicUrl] });
       setTimeout(()=>{ if(fs.existsSync(filePath)) fs.unlinkSync(filePath); }, 120000);
       return res.send('<Response></Response>');
-    }catch(e){
-      console.log("ELEVENLABS TTS Error", e.response?.data?.toString() || e.message);
-    }
+    }catch(e){ console.log("ELEVENLABS Error", e.message); }
   }
 
-  // Normal text reply
   const twiml = new twilio.twiml.MessagingResponse();
   twiml.message(jarvisReply);
   res.type('text/xml').send(twiml.toString());
