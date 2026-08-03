@@ -13,7 +13,7 @@ app.post('/webhook', async (req, res) => {
   let reply = 'Hi! I am Jarvis';
   try {
     const result = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-lite',
+      model: 'gemini-2.5-flash-lite',
       contents: `You are Jarvis, friendly WhatsApp assistant. Reply short (under 100 words). User: ${msg}`
     });
     reply = result.text || result.response?.text || 'Got it boss!';
