@@ -14,7 +14,7 @@ app.use('/audio', express.static(path.join(__dirname, 'public')));
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-app.get('/', (req,res)=> res.send('Jarvis Talking Online Boss!') );
+app.get('/', (req,res)=> res.send('Jarvis Google Latest Online Boss!') );
 
 app.post('/webhook', async (req,res)=>{
   const from = req.body.From;
@@ -32,28 +32,29 @@ app.post('/webhook', async (req,res)=>{
         responseType: 'arraybuffer',
         auth: { username: process.env.TWILIO_ACCOUNT_SID, password: process.env.TWILIO_AUTH_TOKEN }
       });
-      const model = genAI.getGenerativeModel({model:"gemini-2.0-flash"});
+      // GOOGLE LATEST MODEL FOR VOICE
+      const model = genAI.getGenerativeModel({model:"gemini-flash-latest"});
       const result = await model.generateContent([
         { inlineData: { data: Buffer.from(audioRes.data).toString('base64'), mimeType: mediaType } },
-        { text: "Transcribe this audio exactly in Hindi/English. Only transcription." }
+        { text: "Transcribe exactly Hindi/English. Only transcription." }
       ]);
       finalText = result.response.text();
       isVoice = true;
       console.log("Transcribed:", finalText);
-    }catch(e){ console.log("Voice transcribe error",e.message); }
+    }catch(e){ console.log("Voice error",e.message); }
   }
 
   if(!finalText) finalText = "Hi";
 
   let jarvisReply = "";
   try{
-    const model = genAI.getGenerativeModel({model:"gemini-2.0-flash"});
-    const prompt = `You are Jarvis, friendly assistant for Boss in Ahmedabad. Reply in same language user used (Hindi+English mix). Keep short. Call him Boss. User: ${finalText}`;
-    const result = await model.generateContent(prompt);
+    // GOOGLE LATEST MODEL FOR TEXT - THIS WAS WORKING!
+    const model = genAI.getGenerativeModel({model:"gemini-flash-latest"});
+    const result = await model.generateContent(`You are Jarvis, friendly assistant for Boss in Ahmedabad. Reply in same language user used (Hindi+English mix). Keep short, call him Boss. User: ${finalText}`);
     jarvisReply = result.response.text();
   }catch(e){
     jarvisReply = "Boss thoda error aaya, phir se bolo!";
-    console.log("Gemini text error", e.message);
+    console.log("Gemini error", e.message);
   }
 
   if(isVoice && process.env.ELEVENLABS_API_KEY){
@@ -72,7 +73,7 @@ app.post('/webhook', async (req,res)=>{
       await client.messages.create({ from: to, to: from, body: jarvisReply, mediaUrl: [audioPublicUrl] });
       setTimeout(()=>{ if(fs.existsSync(filePath)) fs.unlinkSync(filePath); }, 120000);
       return res.send('<Response></Response>');
-    }catch(e){ console.log("ELEVENLABS Error", e.message); }
+    }catch(e){ console.log("ElevenLabs Error", e.message); }
   }
 
   const twiml = new twilio.twiml.MessagingResponse();
@@ -81,4 +82,4 @@ app.post('/webhook', async (req,res)=>{
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, ()=> console.log('Jarvis Talking on '+PORT));
+app.listen(PORT, ()=> console.log('Jarvis Latest on '+PORT));
