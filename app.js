@@ -1,73 +1,100 @@
 const express = require('express');
+const body_parser = require('body-parser');
 const axios = require('axios');
+const mongoose = require('mongoose');
+const cron = require('node-cron');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+require('dotenv').config();
 
-const app = express();
-app.use(express.json());
+const app = express().use(body_parser.json());
 
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'jarvis123';
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// --- 1. DATABASE (Yaad-dasth) ---
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log("✅ MongoDB Connected - Yaad-dasth ON hai!"))
+  .catch(err => console.error("❌ MongoDB Error:", err));
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const ReminderSchema = new mongoose.Schema({
+  userId: String,
+  message: String,
+  remindAt: Date,
+  sent: { type: Boolean, default: false }
+});
+const Reminder = mongoose.model('Reminder', ReminderSchema);
 
-// 1. Webhook Verification - Meta ke liye
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+// --- 2. BRAIN (Gemini) ---
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('WEBHOOK VERIFIED');
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
+// --- 3. SCHEDULER (Ghadi) - Har 1 minute check karega ---
+cron.schedule('* * * * *', async () => {
+  const now = new Date();
+  const dueReminders = await Reminder.find({ remindAt: { $lte: now }, sent: false });
+  
+  for (let rem of dueReminders) {
+    console.log(`⏰ Reminder Bhejna hai: ${rem.message}`);
+    await sendMessage(rem.userId, `🔔 JAGDISH BOSS, YAAD DILAANA THA!\n\n${rem.message}\n\nTime ho gaya hai Sir!`);
+    rem.sent = true;
+    await rem.save();
   }
 });
 
-// 2. Message Receive & Reply
+async function sendMessage(to, text) {
+  await axios({
+    method: "POST",
+    url: `https://graph.facebook.com/v20.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    headers: { "Authorization": `Bearer ${process.env.WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
+    data: { messaging_product: "whatsapp", to: to, text: { body: text } }
+  });
+}
+
+// --- WEBHOOKS ---
+app.get('/', (req, res) => res.send('JARVIS IS LIVE on 10000 - PRO Version'));
+app.get('/webhook', (req, res) => {
+  if (req.query['hub.verify_token'] == process.env.VERIFY_TOKEN) {
+    res.send(req.query['hub.challenge']);
+  } else { res.sendStatus(403); }
+});
+
 app.post('/webhook', async (req, res) => {
-  try {
-    const entry = req.body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const message = changes?.value?.messages?.[0];
+  let body = req.body;
+  if (body.object) {
+    let entry = body.entry[0].changes[0].value;
+    if (entry.messages) {
+      let from = entry.messages[0].from;
+      let msg_body = entry.messages[0].text.body;
 
-    if (message && message.type === 'text') {
-      const from = message.from;
-      const text = message.text.body;
+      // Naya Brain Logic - Date nikalna
+      const prompt = `
+      You are JARVIS. User said: "${msg_body}"
+      Today's date is: ${new Date().toString()}
+      Task:
+      1. Check if user is asking to remind something.
+      2. If yes, extract reminder text and date/time in ISO format.
+      3. If user says "2 minute me" -> add 2 minutes to current time.
+      4. If user says "10 August ko" -> make it 10 Aug this year 9 AM.
+      5. Return ONLY JSON like: {"is_reminder": true, "remind_text": "sona ka time", "remind_at": "2025-08-06T00:32:00.000Z", "reply": "Bilkul Sir..."}
+      6. If not a reminder, is_reminder: false and give a stylish JARVIS reply in Hindi/English mix for Jagdish Sir.
+      `;
 
-      console.log(`Message from ${from}: ${text}`);
+      try {
+        const result = await model.generateContent(prompt);
+        let text = result.response.text().replace(/```json|```/g, '').trim();
+        let data = JSON.parse(text);
 
-      // Gemini se jawab lo
-      const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-      const result = await model.generateContent(`You are JARVIS, a super intelligent, witty and loyal AI assistant. Your Boss name is Jagdish. Always call him Jagdish Sir with respect. Talk in friendly Hindi + English mix. Reply in same language as user. User says: ${text}`);
-      const reply = result.response.text();
-
-      // WhatsApp pe bhejo
-      await axios.post(
-        `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`,
-        {
-          messaging_product: "whatsapp",
-          to: from,
-          text: { body: reply }
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-            'Content-Type': 'application/json'
-          }
+        if (data.is_reminder) {
+          const newRem = new Reminder({ userId: from, message: data.remind_text, remindAt: new Date(data.remind_at) });
+          await newRem.save();
+          await sendMessage(from, data.reply);
+        } else {
+          await sendMessage(from, data.reply || data.response || "Yes Boss?");
         }
-      );
+      } catch (e) {
+        console.error(e);
+        await sendMessage(from, "Thoda network issue hai Boss, fir se bolo?");
+      }
     }
     res.sendStatus(200);
-  } catch (error) {
-    console.error('Error:', error.response?.data || error.message);
-    res.sendStatus(200);
-  }
+  } else { res.sendStatus(404); }
 });
 
-app.get('/', (req, res) => res.send('JARVIS IS LIVE'));
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`LIVE on ${PORT}`));
+app.listen(process.env.PORT || 10000, () => console.log('🚀 JARVIS PRO LIVE on 10000'));
