@@ -16,7 +16,7 @@ app.post('/whatsapp', async (req, res) => {
   try {
     if(process.env.GEMINI_API_KEY){
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
       
       // Fast reply - 7 sec timeout
       const result = await Promise.race([
