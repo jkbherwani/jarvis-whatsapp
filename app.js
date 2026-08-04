@@ -13,7 +13,7 @@ app.post('/whatsapp', async (req, res) => {
   let reply = `Hi Boss! Main ON hu! "${userMsg}"`;
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
     const result = await Promise.race([
       model.generateContent(`You are Jarvis for Jagdish. Reply short Hinglish. User: ${userMsg}`),
       new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
