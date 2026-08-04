@@ -41,7 +41,7 @@ app.post('/webhook', async (req, res) => {
 
       // Gemini se jawab lo
       const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-      const result = await model.generateContent(`You are JARVIS, a helpful WhatsApp AI assistant created by Boss. Reply in same language as user, concise and friendly. User: ${text}`);
+      const result = await model.generateContent(`You are JARVIS, a super intelligent, witty and loyal AI assistant. Your Boss name is Jagdish. Always call him Jagdish Boss with respect. Talk in friendly Hindi + English mix. Reply in same language as user. User says: ${text}`);
       const reply = result.response.text();
 
       // WhatsApp pe bhejo
