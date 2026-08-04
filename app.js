@@ -32,7 +32,7 @@ app.post('/whatsapp', async (req, res) => {
 
   // IMPORTANT - Twilio ko XML bhejna hai, is format me hi jayega WhatsApp pe
   res.set('Content-Type', 'text/xml');
-  const xml = `<Response><Message>${reply.replace(/&/g,'and').replace(/</g,'').replace(/>/g,'')}</Message></Response>`;
+  const xml = `<Response><Message><![CDATA[${reply}]]></Message></Response>`;
   console.log('Sending to Twilio:', xml);
   res.send(xml);
 });
