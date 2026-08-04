@@ -1,45 +1,41 @@
 const express = require('express');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const twilio = require('twilio');
 const app = express();
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-app.use((req, res, next) => {
-  console.log(`HIT: ${req.method} ${req.path} Body:${JSON.stringify(req.body).substring(0,200)}`);
-  next();
-});
-
-app.get('/', (req,res) => res.send('Jarvis LIVE - https://jarvis-whatsapp-pcjx.onrender.com'));
+app.get('/', (req, res) => res.send('Jarvis LIVE'));
 
 app.post('/whatsapp', async (req, res) => {
-  const incomingMsg = req.body.Body || 'Hi';
-  console.log(`Incoming: ${incomingMsg}`);
-
-  let replyText = `Hi Boss! Main ON hu! Aapne bola: "${incomingMsg}"`;
+  const userMsg = req.body.Body || 'Hi';
+  console.log('Incoming:', userMsg);
+  
+  let reply = `Hi Boss! Main ON hu! Aapne bola: "${userMsg}" Thoda Gemini slow tha isliye direct bola!`;
 
   try {
-    if (process.env.GEMINI_API_KEY) {
+    if(process.env.GEMINI_API_KEY){
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      
+      // Fast reply - 7 sec timeout
       const result = await Promise.race([
-        model.generateContent(`You are Jarvis, helpful assistant of Jagdish Bherwani. Reply in Hinglish short. User: ${incomingMsg}`),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+        model.generateContent(`You are Jarvis assistant for Jagdish. Reply short in Hinglish. User: ${userMsg}`),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 7000))
       ]);
-      const text = result.response.text();
-      if(text) replyText = text;
-      console.log(`Gemini: ${replyText}`);
+      reply = result.response.text().substring(0,1500);
+      console.log('Gemini:', reply);
     }
-  } catch (e) {
-    console.log(`Gemini Error/Timeout: ${e.message}, using fallback`);
+  } catch(e) {
+    console.log('Gemini error:', e.message);
   }
 
-  const twiml = new twilio.twiml.MessagingResponse();
-  twiml.message(replyText);
+  // IMPORTANT - Twilio ko XML bhejna hai, is format me hi jayega WhatsApp pe
   res.set('Content-Type', 'text/xml');
-  res.send(twiml.toString());
+  const xml = `<Response><Message>${reply.replace(/&/g,'and').replace(/</g,'').replace(/>/g,'')}</Message></Response>`;
+  console.log('Sending to Twilio:', xml);
+  res.send(xml);
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Jarvis LIVE on ${PORT}`));
+app.listen(PORT, () => console.log('LIVE on ' + PORT));
