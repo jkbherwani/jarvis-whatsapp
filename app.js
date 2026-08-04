@@ -23,7 +23,7 @@ const Reminder = mongoose.model('Reminder', ReminderSchema);
 
 // --- 2. BRAIN (Gemini) ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
 // --- 3. SCHEDULER (Ghadi) - Har 1 minute check karega ---
 cron.schedule('* * * * *', async () => {
